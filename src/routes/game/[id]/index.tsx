@@ -18,7 +18,7 @@ import { createClient } from "@libsql/client";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import { games } from "~/db/schema";
-import { boardInit, useUser } from "~/routes/lobby/index";
+import { boardInit } from "~/routes/lobby/index";
 import * as Y from "yjs";
 import * as schema from "~/db/schema";
 import { WebrtcProvider } from "y-webrtc";
@@ -45,7 +45,39 @@ export function deserializeUint8Array(base64String: string): Uint8Array {
   return bytes;
 }
 
-export { useUser } from "~/routes/lobby/index";
+
+export const useUser = routeLoader$(
+  async ({ env, cookie, error, redirect }) => {
+    const TURSO_URL = env.get("TURSO_URL");
+    const TURSO_AUTH_TOKEN = env.get("TURSO_AUTH_TOKEN");
+
+    if (!TURSO_URL || !TURSO_AUTH_TOKEN) {
+      throw error(500, "Missing TURSO_URL or TURSO_AUTH_TOKEN");
+    }
+    const client = createClient({
+      url: TURSO_URL,
+      authToken: TURSO_AUTH_TOKEN,
+    });
+    const db = drizzle(client, { schema });
+
+    const userId = cookie.get("userId");
+    if (!userId) {
+      throw redirect(302, "/");
+    }
+
+    const user = await db.query.users.findFirst({
+      where: eq(schema.users.id, userId.number()),
+      with: {
+        guestGames: true,
+        hostGames: true,
+      },
+    });
+    if (!user) {
+      throw redirect(302, "/");
+    }
+    return user;
+  },
+);
 
 export const useGame = routeLoader$(
   async ({ env, cookie, error, redirect, params }) => {
