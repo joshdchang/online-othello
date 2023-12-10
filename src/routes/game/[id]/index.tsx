@@ -21,7 +21,7 @@ import { games } from "~/db/schema";
 import { boardInit } from "~/routes/lobby/index";
 import * as Y from "yjs";
 import * as schema from "~/db/schema";
-import { WebrtcProvider } from "y-webrtc";
+// import { WebrtcProvider } from "y-webrtc";
 import { WebsocketProvider } from "y-websocket";
 
 export type GameData = {
@@ -247,12 +247,13 @@ export default component$(() => {
       meta.set("guestName", user.value.name);
     }
 
-    new WebrtcProvider("game-" + gameValue.id, ydoc, {
-      signaling: [import.meta.env.PUBLIC_SIGNALING_URL],
-    });
+    // new WebrtcProvider("game-" + gameValue.id, ydoc, {
+    //   signaling: [import.meta.env.PUBLIC_SIGNALING_URL],
+    // });
+
     new WebsocketProvider(
       import.meta.env.PUBLIC_WEBSOCKET_URL ?? "ws://localhost:1234",
-      "game-" + gameValue.id,
+      "josh-online-othello-game-" + gameValue.id,
       ydoc,
     );
 
