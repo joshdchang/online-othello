@@ -12,6 +12,7 @@ import { drizzle } from "drizzle-orm/libsql";
 import { createClient } from "@libsql/client";
 import { users } from "~/db/schema";
 import { eq } from "drizzle-orm";
+import * as schema from "~/db/schema";
 
 export const useCreateUser = routeAction$(
   async (data, { env, cookie }) => {
@@ -74,12 +75,14 @@ export const onRequest: RequestHandler = async ({ cookie, env, error, redirect }
     url: TURSO_URL,
     authToken: TURSO_AUTH_TOKEN,
   });
-  const db = drizzle(client);
+  const db = drizzle(client, { schema });
 
   const userId = cookie.get("userId");
   if (userId) {
-    const user = await db.select().from(users).where(eq(users.id, userId.number()));
-    if (user.length) {
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, userId.number()),
+    });
+    if (user) {
       throw redirect(302, "/lobby");
     }
   }

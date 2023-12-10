@@ -50,9 +50,6 @@
   "dependencies": {
     "@hocuspocus/provider": "^2.8.1",
     "@libsql/client": "^0.4.0-pre.5",
-    "drizzle-orm": "^0.29.1",
-    "y-webrtc": "^10.2.6",
-    "y-websocket": "^1.5.0",
-    "yjs": "^13.6.10"
+    "drizzle-orm": "^0.29.1"
   }
 }

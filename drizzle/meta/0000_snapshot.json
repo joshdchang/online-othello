@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "sqlite",
-  "id": "d9a74236-39fd-4c97-8132-36d2e484de34",
+  "id": "4a07c7f4-37f3-45b9-a576-ff1d03fc0855",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "games": {
@@ -28,8 +28,22 @@
           "notNull": false,
           "autoincrement": false
         },
-        "data": {
-          "name": "data",
+        "player1": {
+          "name": "player1",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "currentTurn": {
+          "name": "currentTurn",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "board": {
+          "name": "board",
           "type": "text",
           "primaryKey": false,
           "notNull": true,

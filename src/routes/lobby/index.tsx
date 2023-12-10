@@ -11,9 +11,7 @@ import { createClient } from "@libsql/client";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import { games, users } from "~/db/schema";
-import * as Y from "yjs";
 import * as schema from "~/db/schema";
-import { serializeUint8Array } from "../game/[id]";
 
 export const boardInit =
   "0000000000000000000000000002100000012000000000000000000000000000";
@@ -74,20 +72,12 @@ export const useCreateGame = routeAction$(async (data, { env, cookie }) => {
   });
   const db = drizzle(client);
 
-  const ydoc = new Y.Doc();
-  const metaData = ydoc.getMap<number | null | string>("meta");
-
-  metaData.set("black", userId);
-  metaData.set("current", "1");
-  metaData.set("guestId", null);
-  metaData.set("guestName", null);
-  metaData.set("board", boardInit);
-
-  const binary = Y.encodeStateAsUpdate(ydoc);
   try {
     const result = await db.insert(games).values({
       hostId: userId,
-      data: serializeUint8Array(binary),
+      board: boardInit,
+      currentTurn: "1",
+      player1: userId,
     });
 
     const gameId = result.lastInsertRowid;

@@ -1,10 +1,11 @@
 import {
-  type NoSerialize,
   component$,
-  noSerialize,
   useSignal,
-  useVisibleTask$,
   useComputed$,
+  useVisibleTask$,
+  useTask$,
+  type NoSerialize,
+  noSerialize,
 } from "@builder.io/qwik";
 import {
   Link,
@@ -19,32 +20,14 @@ import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import { games } from "~/db/schema";
 import { boardInit } from "~/routes/lobby/index";
-import * as Y from "yjs";
 import * as schema from "~/db/schema";
-// import { WebrtcProvider } from "y-webrtc";
-import { WebsocketProvider } from "y-websocket";
 
-export type GameData = {
-  black: number;
-  guestId: number | null;
-  guestName: string | null;
-  current: string;
+type Message = {
+  id: number;
   board: string;
+  currentTurn: string;
+  player1: number;
 };
-
-export function serializeUint8Array(array: Uint8Array): string {
-  return btoa(String.fromCharCode.apply(null, array as unknown as number[]));
-}
-export function deserializeUint8Array(base64String: string): Uint8Array {
-  const binaryString = atob(base64String);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes;
-}
-
 
 export const useUser = routeLoader$(
   async ({ env, cookie, error, redirect }) => {
@@ -127,7 +110,7 @@ export const useGame = routeLoader$(
 );
 
 export const useUpdateGame = routeAction$(
-  async ({ data }, { env, cookie, params }) => {
+  async ({ board, currentTurn, player1 }, { env, cookie, params }) => {
     const TURSO_URL = env.get("TURSO_URL");
     const TURSO_AUTH_TOKEN = env.get("TURSO_AUTH_TOKEN");
     if (!TURSO_URL || !TURSO_AUTH_TOKEN) {
@@ -160,127 +143,96 @@ export const useUpdateGame = routeAction$(
 
     await db
       .update(games)
-      .set({ data })
+      .set({ board, currentTurn, player1 })
       .where(eq(games.id, Number(id)));
   },
   zod$({
-    data: z.string(),
+    board: z.string(),
+    currentTurn: z.string(),
+    player1: z.number(),
   }),
 );
 
 export default component$(() => {
-  const user = useUser();
-  const game = useGame();
-  const updateGame = useUpdateGame();
-
   const loc = useLocation();
 
-  const gameData = useSignal(() => {
-    const ydoc = new Y.Doc();
-    const binary = deserializeUint8Array(game.value.data);
-    Y.applyUpdate(ydoc, binary);
-    const metaData = ydoc.getMap<number | null | string>("meta");
-    return metaData.toJSON() as GameData;
+  const user = useUser();
+  const gameInit = useGame();
+  const updateGame = useUpdateGame();
+
+  const game = useSignal(gameInit.value);
+  useTask$(({ track }) => {
+    const gameValue = track(() => gameInit.value);
+    game.value = gameValue;
   });
 
-  const opponent = useSignal(() => {
-    if (game.value.hostId === user.value.id) {
-      return game.value.guest;
-    }
-    return game.value.host;
-  });
-
-  const ydocSignal = useSignal<NoSerialize<Y.Doc>>();
-
-  const isBlack = useComputed$(() => gameData.value.black === user.value.id);
-  const isTurn = useComputed$(() =>
-    isBlack.value
-      ? gameData.value.current === "1"
-      : gameData.value.current === "2",
+  const opponent = useComputed$(() =>
+    game.value.hostId === user.value.id ? game.value.guest : game.value.host,
   );
-
-  const score = useComputed$(() => {
-    const { board } = gameData.value;
-    const black = board.match(/1/g)?.length ?? 0;
-    const white = board.match(/2/g)?.length ?? 0;
-    return {
-      black,
-      white,
-    };
-  });
-
-  const isOver = useComputed$(() => {
-    const { board } = gameData.value;
-    const black = board.match(/1/g)?.length ?? 0;
-    const white = board.match(/2/g)?.length ?? 0;
-    return black + white === 64;
-  });
-
+  const isPlayer1 = useComputed$(() => game.value.player1 === user.value.id);
+  const isTurn = useComputed$(() =>
+    isPlayer1.value
+      ? game.value.currentTurn === "1"
+      : game.value.currentTurn === "2",
+  );
+  const score = useComputed$(() => ({
+    player1: game.value.board.match(/1/g)?.length ?? 0,
+    player2: game.value.board.match(/2/g)?.length ?? 0,
+  }));
+  const isOver = useComputed$(
+    () => score.value.player1 + score.value.player2 === 64,
+  );
   const winner = useComputed$(() => {
-    const { board } = gameData.value;
-    const black = board.match(/1/g)?.length ?? 0;
-    const white = board.match(/2/g)?.length ?? 0;
-    if (black > white) {
-      return "1";
-    } else if (white > black) {
-      return "2";
-    } else {
+    if (score.value.player1 === score.value.player2) {
       return "0";
     }
+    return score.value.player1 > score.value.player2 ? "1" : "2";
   });
 
+  const wsConnection = useSignal<NoSerialize<WebSocket>>();
+
   // eslint-disable-next-line qwik/no-use-visible-task
-  useVisibleTask$(async ({ track, cleanup }) => {
-    const gameValue = track(() => game.value);
+  useVisibleTask$(async ({ cleanup }) => {
+    const url = import.meta.env.PUBLIC_WEBSOCKET_URL;
+    const connection = new WebSocket(url);
 
-    const ydoc = new Y.Doc();
+    connection.onopen = () => {
+      console.log("WebSocket Client Connected");
+      connection.send(
+        JSON.stringify({
+          id: game.value.id,
+          board: game.value.board,
+          currentTurn: game.value.currentTurn,
+          player1: game.value.player1,
+        } satisfies Message),
+      );
+    };
 
-    ydocSignal.value = noSerialize(ydoc);
-    const binary = deserializeUint8Array(gameValue.data);
+    connection.onerror = (error) => {
+      console.error(`WebSocket Error: ${error}`);
+    };
 
-    Y.applyUpdate(ydoc, binary);
-
-    const meta = ydoc.getMap<number | null | string>("meta");
-
-    if (game.value.guestId === user.value.id && !meta.get("guestId")) {
-      meta.set("guestId", user.value.id);
-      meta.set("guestName", user.value.name);
-    }
-
-    // new WebrtcProvider("game-" + gameValue.id, ydoc, {
-    //   signaling: [import.meta.env.PUBLIC_SIGNALING_URL],
-    // });
-
-    new WebsocketProvider(
-      import.meta.env.PUBLIC_WEBSOCKET_URL ?? "ws://localhost:1234",
-      "josh-online-othello-game-" + gameValue.id,
-      ydoc,
-    );
-
-    meta.observe((event) => {
-      const meta = event.currentTarget.toJSON() as GameData;
-      if (
-        meta.guestName &&
-        meta.guestId &&
-        !opponent.value &&
-        meta.guestId === user.value.id
-      ) {
-        opponent.value = {
-          id: meta.guestId as number,
-          name: meta.guestName as string,
-        };
+    connection.onmessage = (e) => {
+      const msg = JSON.parse(e.data) as Message;
+      if (msg.id !== game.value.id) {
+        return;
       }
-      gameData.value = meta;
-    });
+      game.value = {
+        ...game.value,
+        board: msg.board,
+        currentTurn: msg.currentTurn,
+        player1: msg.player1,
+      };
+    };
 
-    ydoc.on("update", () => {
-      const binary = Y.encodeStateAsUpdate(ydoc);
-      const data = serializeUint8Array(binary);
-      updateGame.submit({ data });
-    });
+    connection.onclose = () => {
+      console.log("WebSocket Client Disconnected");
+    };
+
+    wsConnection.value = noSerialize(connection);
 
     cleanup(() => {
-      ydoc.destroy();
+      connection.close();
     });
   });
 
@@ -294,12 +246,13 @@ export default component$(() => {
             </Link>
             <div class="flex items-center gap-4">
               <p class="rounded-lg bg-gray-100 px-4 py-1 text-gray-500">
-                Game ID: <span class="font-bold">{game.value.id}</span>
+                Game ID: <span class="font-bold">{gameInit.value.id}</span>
               </p>
               <button
                 class="flex items-center gap-2 rounded-lg bg-emerald-200 px-4 py-1 text-emerald-600 hover:bg-emerald-300 active:bg-emerald-400"
                 onClick$={() => {
-                  const url = new URL("/join/" + game.value.id, loc.url).href;
+                  const url = new URL("/join/" + gameInit.value.id, loc.url)
+                    .href;
                   navigator.clipboard.writeText(url);
                 }}
               >
@@ -324,7 +277,7 @@ export default component$(() => {
             </div>
           </div>
           <div class="board grid grid-cols-8 gap-1 rounded-xl border-4 border-emerald-400 bg-emerald-600 p-2">
-            {gameData.value.board.split("").map((cell, cellIndex) => (
+            {game.value.board.split("").map((cell, cellIndex) => (
               <>
                 {cell === "1" ? (
                   <div class="aspect-square rounded-full bg-black"></div>
@@ -333,12 +286,7 @@ export default component$(() => {
                 ) : (
                   <button
                     onClick$={() => {
-                      const ydoc = ydocSignal.value;
-                      if (!ydoc) {
-                        return;
-                      }
-
-                      const newBoard = gameData.value.board.split("");
+                      const newBoard = game.value.board.split("");
                       let isLegalMove = false;
                       const validDirections: [number, number][] = [];
                       const x = cellIndex % 8;
@@ -362,11 +310,11 @@ export default component$(() => {
                             break;
                           }
                           const index = ny * 8 + nx;
-                          const cell = gameData.value.board[index];
+                          const cell = game.value.board[index];
                           if (cell === "0") {
                             break;
                           }
-                          if (cell === gameData.value.current) {
+                          if (cell === game.value.currentTurn) {
                             if (i > 1) {
                               isLegalMove = true;
                               validDirections.push([dx, dy]);
@@ -390,22 +338,22 @@ export default component$(() => {
                             break;
                           }
                           const index = ny * 8 + nx;
-                          const cell = gameData.value.board[index];
+                          const cell = game.value.board[index];
                           if (cell === "0") {
                             break;
                           }
-                          if (cell === gameData.value.current) {
+                          if (cell === game.value.currentTurn) {
                             break;
                           }
-                          newBoard[index] = gameData.value.current;
+                          newBoard[index] = game.value.currentTurn;
                           i++;
                         }
                       }
 
-                      newBoard[cellIndex] = gameData.value.current;
+                      newBoard[cellIndex] = game.value.currentTurn;
 
                       const opponent =
-                        gameData.value.current === "1" ? "2" : "1";
+                        game.value.currentTurn === "1" ? "2" : "1";
                       let opponentHasMoves = false;
                       for (let i = 0; i < 64; i++) {
                         const x = i % 8;
@@ -434,14 +382,30 @@ export default component$(() => {
                         }
                       }
 
-                      const meta = ydoc.getMap<number | null | string>("meta");
-                      ydoc.transact(() => {
-                        meta.set(
-                          "current",
-                          opponentHasMoves ? opponent : gameData.value.current,
-                        );
-                        meta.set("board", newBoard.join(""));
+                      updateGame.submit({
+                        board: newBoard.join(""),
+                        currentTurn: opponentHasMoves
+                          ? opponent
+                          : game.value.currentTurn,
+                        player1: game.value.player1,
                       });
+                      game.value = {
+                        ...game.value,
+                        board: newBoard.join(""),
+                        currentTurn: opponentHasMoves
+                          ? opponent
+                          : game.value.currentTurn,
+                      };
+                      wsConnection.value?.send(
+                        JSON.stringify({
+                          id: game.value.id,
+                          board: newBoard.join(""),
+                          currentTurn: opponentHasMoves
+                            ? opponent
+                            : game.value.currentTurn,
+                          player1: game.value.player1,
+                        } satisfies Message),
+                      );
                     }}
                     disabled={!isTurn.value}
                     class="aspect-square rounded-full bg-emerald-900/20 hover:bg-emerald-900/40 active:bg-emerald-900/60 disabled:bg-emerald-900/20"
@@ -461,47 +425,42 @@ export default component$(() => {
             </div>
             <div class="flex w-full items-center justify-between">
               <div class="flex items-center gap-3">
-                {gameData.value.black === user.value.id ? (
+                {game.value.player1 === user.value.id ? (
                   <div class="flex h-7 w-7 items-center rounded-full border border-gray-400 bg-black shadow"></div>
                 ) : (
                   <div class="flex h-7 w-7 items-center rounded-full border border-gray-400 shadow"></div>
                 )}
                 <p class="text-2xl font-bold">
-                  {isBlack.value ? score.value.black : score.value.white}
+                  {isPlayer1.value ? score.value.player1 : score.value.player2}
                 </p>
               </div>
               <div class="flex items-center gap-4">
-                {isOver.value ? (
-                  winner.value === "0" ? (
-                    <p class="text-xl font-bold text-gray-500">Draw</p>
-                  ) : winner.value === "1" && isBlack.value ? (
-                    <p class="text-xl font-bold text-emerald-600">You win!</p>
-                  ) : (
-                    <p class="text-xl font-bold text-rose-600">You lose</p>
-                  )
-                ) : isTurn.value ? (
+                {isOver.value && winner.value === "0" && (
+                  <p class="text-xl font-bold text-gray-500">Draw</p>
+                )}
+                {isOver.value && winner.value === "1" && isPlayer1.value && (
+                  <p class="text-xl font-bold text-emerald-600">You win!</p>
+                )}
+                {isOver.value && winner.value === "1" && !isPlayer1.value && (
+                  <p class="text-xl font-bold text-rose-600">You lose</p>
+                )}
+                {!isOver.value && isTurn.value && (
                   <p class="text-xl font-bold text-amber-600">Your turn</p>
-                ) : (
+                )}
+                {!isOver.value && !isTurn.value && (
                   <p class="text-xl text-gray-500">Opponent's turn</p>
                 )}
-                {isOver.value ? (
+                {isOver.value && (
                   <button
                     class="rounded-full bg-slate-200 px-4 py-2 font-medium text-slate-600 hover:bg-slate-300 active:bg-slate-400"
                     onClick$={() => {
-                      const ydoc = ydocSignal.value;
-                      if (!ydoc) {
-                        return;
-                      }
-                      const meta = ydoc.getMap<number | null | string>("meta");
-                      ydoc.transact(() => {
-                        meta.set("board", boardInit);
-                        meta.set("current", "1");
-                        meta.set(
-                          "black",
-                          isBlack.value && opponent.value
+                      updateGame.submit({
+                        board: boardInit,
+                        currentTurn: "1",
+                        player1:
+                          game.value.player1 === user.value.id && opponent.value
                             ? opponent.value.id
                             : user.value.id,
-                        );
                       });
                     }}
                   >
@@ -522,13 +481,13 @@ export default component$(() => {
                       <path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" />
                     </svg>
                   </button>
-                ) : null}
+                )}
               </div>
               <div class="flex items-center justify-end gap-3">
                 <p class="text-2xl font-bold">
-                  {isBlack.value ? score.value.white : score.value.black}
+                  {isPlayer1.value ? score.value.player2 : score.value.player1}
                 </p>
-                {gameData.value.black === user.value.id ? (
+                {game.value.player1 === user.value.id ? (
                   <div class="flex h-7 w-7 items-center rounded-full border border-gray-400 shadow"></div>
                 ) : (
                   <div class="flex h-7 w-7 items-center rounded-full border border-gray-400 bg-black shadow"></div>

@@ -2,7 +2,9 @@ CREATE TABLE `games` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`hostId` integer NOT NULL,
 	`guestId` integer,
-	`data` text NOT NULL
+	`player1` integer NOT NULL,
+	`currentTurn` text NOT NULL,
+	`board` text NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE `users` (

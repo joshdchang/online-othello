@@ -22,7 +22,9 @@ export const games = sqliteTable("games", {
   id: integer("id", { mode: "number" }).primaryKey({ autoIncrement: true }),
   hostId: integer("hostId").notNull(),
   guestId: integer("guestId"),
-  data: text("data").notNull(),
+  player1: integer("player1").notNull(),
+  currentTurn: text("currentTurn").notNull(),
+  board: text("board").notNull(),
 });
 
 export const gamesRelations = relations(games, ({ one }) => ({
